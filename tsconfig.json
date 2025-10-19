@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "lib": ["ES2020", "DOM"],
+    "jsx": "preserve",
+    "strict": true,
+    "noEmit": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "~/*": ["./*"],
+      "@/*": ["./*"]
+    },
+
+    "types": ["@nuxt/types", "@types/node"],
+    "esModuleInterop": true,         // ← server/index.ts で `import express from 'express'` を許可
+    "skipLibCheck": true
+  },
+  "include": ["**/*.ts", "**/*.tsx", "**/*.vue", "types/**/*.d.ts"],
+  "exclude": ["node_modules", ".nuxt", "dist"]
+}
