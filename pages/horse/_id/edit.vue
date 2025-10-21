@@ -2,7 +2,6 @@
   <div class="container py-4">
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap bg-white rounded-3 shadow-sm px-3 py-2">
       <h1 class="h5 m-0 fw-bold">{{ form.name || '競走馬編集' }}</h1>
-      <!-- ★ from=entries&raceId があれば出走馬一覧に戻す -->
       <nuxt-link :to="backTo" class="btn btn-outline-secondary btn-sm text-nowrap px-3">戻る</nuxt-link>
     </div>
 
@@ -42,6 +41,21 @@
             <div class="col-md-2">
               <label class="form-label mb-1">年齢</label>
               <input :value="formatAge(form.birth_date)" type="text" class="form-control" disabled>
+            </div>
+          </div>
+
+          <!-- 出走予定（あれば表示） -->
+          <div v-if="form.upcoming_race_id" class="row g-2 align-items-center mt-2">
+            <label class="col-sm-2 col-form-label">出走予定</label>
+            <div class="col-sm-7">
+              <div class="form-control-plaintext">
+                {{ formatYmdSlash(form.upcoming_race_date) }}　{{ form.upcoming_race_name }}
+              </div>
+            </div>
+            <div class="col-sm-3 text-sm-end">
+              <button class="btn btn-outline-danger btn-sm" type="button" @click="cancelEntry">
+                出走取消
+              </button>
             </div>
           </div>
 
@@ -132,6 +146,10 @@ type Form = {
   bloodmare_sire?: string | null
   grandsire?: string | null
   memo: string
+  // 出走予定（サーバから追加で来る）
+  upcoming_race_id?: number | null
+  upcoming_race_name?: string | null
+  upcoming_race_date?: string | null // 'YYYY-MM-DD'
 }
 type Center = { training_center_id: number; training_center_name: string }
 
@@ -158,6 +176,9 @@ export default Vue.extend({
         bloodmare_sire: '',
         grandsire: '',
         memo: '',
+        upcoming_race_id: null,
+        upcoming_race_name: '',
+        upcoming_race_date: '',
       } as Form,
       centers: [] as Center[],
       nameError: '',
@@ -166,7 +187,7 @@ export default Vue.extend({
     }
   },
   computed: {
-    // ★ クエリに from=entries & raceId が来ていれば出走馬一覧へ戻す
+    // クエリに from=entries & raceId が来ていれば出走馬一覧へ戻す
     backTo(): string {
       const q = this.$route.query || {}
       if (q.from === 'entries' && q.raceId) {
@@ -197,6 +218,10 @@ export default Vue.extend({
       const age = currentYear - birthYear
       return age >= 0 ? `${age}歳` : '—'
     },
+    formatYmdSlash(d?: string | null): string {
+      if (!d) return ''
+      return d.replace(/-/g, '/')
+    },
     async onNameBlur() {
       const name = (this.form.name || '').trim()
       if (!name) { this.nameError = ''; return }
@@ -206,14 +231,29 @@ export default Vue.extend({
         })
         this.nameError = registeredHorseInDb?.exists ? '同名の馬が既に登録されています' : ''
       } catch (_e) {
-        this.nameError = '重複チェックに失敗しました'
+        // 通信失敗は「注意」扱いにして、送信自体は止めないほうが作業性が良いなら空にする
+        this.nameError = ''
+      }
+    },
+    async cancelEntry() {
+      if (!this.form.upcoming_race_id) return
+      const name = this.form.upcoming_race_name || ''
+      if (!confirm(`「${name}」への出走を取り消しますか？`)) return
+      try {
+        await this.$axios.$delete(
+          `/api/race-entries?race_id=${this.form.upcoming_race_id}&horse_id=${this.form.id}`
+        )
+        // 再取得して反映
+        const fresh: Form = await this.$axios.$get(`/api/horses/${this.form.id}`)
+        this.form = { ...fresh, id: this.form.id }
+      } catch (e: any) {
+        alert(e?.response?.data?.error ?? e?.message ?? '出走取消に失敗しました')
       }
     },
     async submit() {
       this.error = ''
       await this.onNameBlur()
       if (this.nameError) return
-
       try {
         this.submitting = true
         const body = { ...this.form }

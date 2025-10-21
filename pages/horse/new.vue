@@ -2,7 +2,7 @@
   <div class="container py-4">
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap bg-white rounded-3 shadow-sm px-3 py-2">
       <h1 class="h5 m-0 fw-bold">競走馬登録</h1>
-      <nuxt-link to="/" class="btn btn-outline-secondary btn-sm text-nowrap px-3">一覧へ戻る</nuxt-link>
+      <nuxt-link to="/" class="btn btn-outline-secondary btn-sm text-nowrap px-3">戻る</nuxt-link>
     </div>
 
     <div class="card border-0 shadow">
@@ -14,19 +14,20 @@
             <div class="col-md-6">
               <label class="form-label mb-1">
                 馬名 <span class="text-danger">*</span>
+                <!-- 既存名エラーだけボタン無効化。通信失敗は警告表示だけでブロックしない -->
                 <span v-if="nameError" class="ms-2 text-danger small">{{ nameError }}</span>
+                <span v-else-if="nameWarn" class="ms-2 text-warning small">{{ nameWarn }}</span>
               </label>
               <input
                 v-model.trim="form.name"
                 @blur="onNameBlur"
                 type="text"
                 class="form-control"
-                placeholder="例）レガレイラ"
                 required
               />
             </div>
 
-            <div class="col-md-3">
+            <div class="col-md-2">
               <label class="form-label mb-1">性別</label>
               <select v-model="form.sex" class="form-select">
                 <option value="">—</option>
@@ -36,13 +37,17 @@
               </select>
             </div>
 
-            <div class="col-md-3">
+            <div class="col-md-2">
               <label class="form-label mb-1">生年月日</label>
               <input v-model="form.birth_date" type="date" class="form-control" />
             </div>
+
+            <div class="col-md-2">
+              <label class="form-label mb-1">年齢</label>
+              <input :value="formatAge(form.birth_date)" type="text" class="form-control" disabled>
+            </div>
           </div>
 
-          <!-- 所属トレセン / 調教師 -->
           <div class="row g-3 mt-2">
             <div class="col-md-3">
               <label class="form-label mb-1">所属トレセン</label>
@@ -56,11 +61,10 @@
 
             <div class="col-md-5">
               <label class="form-label mb-1">調教師</label>
-              <input v-model.trim="form.trainer" type="text" class="form-control" placeholder="例）中内田充" />
+              <input v-model.trim="form.trainer" type="text" class="form-control" />
             </div>
           </div>
 
-          <!-- オーナー / 生産者 -->
           <div class="row g-3 mt-2">
             <div class="col-md-4">
               <label class="form-label mb-1">馬主</label>
@@ -72,7 +76,6 @@
             </div>
           </div>
 
-          <!-- 血統 -->
           <div class="row g-3 mt-2">
             <div class="col-md-4">
               <label class="form-label mb-1">父</label>
@@ -95,10 +98,9 @@
             </div>
           </div>
 
-          <!-- メモ -->
           <div class="mt-3">
             <label class="form-label mb-1">メモ</label>
-            <textarea v-model="form.memo" rows="4" class="form-control" placeholder="自由記述（戦績・所感など）"></textarea>
+            <textarea v-model="form.memo" rows="6" class="form-control"></textarea>
           </div>
 
           <div class="mt-4 d-flex gap-2">
@@ -155,7 +157,8 @@ export default Vue.extend({
         memo: '',
       } as Form,
       centers: [] as Center[],
-      nameError: '',
+      nameError: '', // 重複時の赤エラー（→ボタン無効）
+      nameWarn: '', // 通信失敗時の黄色警告（→ボタンは無効化しない）
       submitting: false,
       error: '',
     }
@@ -164,18 +167,31 @@ export default Vue.extend({
     try {
       this.centers = await this.$axios.$get('/api/training-centers')
     } catch (e: any) {
-      this.error = e?.message ?? '初期データの読み込みに失敗しました'
+      this.error = e?.response?.data?.error ?? e?.message ?? '初期化に失敗しました'
     }
   },
   methods: {
+    formatAge(dateStr?: string | null) {
+      if (!dateStr) return '—'
+      const m = dateStr.match(/^(\d{4})-/)
+      if (!m) return '—'
+      const birthYear = Number(m[1])
+      const currentYear = new Date().getFullYear()
+      const age = currentYear - birthYear
+      return age >= 0 ? `${age}歳` : '—'
+    },
     async onNameBlur() {
+      this.nameError = ''
+      this.nameWarn = ''
       const name = (this.form.name || '').trim()
-      if (!name) { this.nameError = ''; return }
+      if (!name) return
       try {
-        const r = await this.$axios.$get('/api/horses/check-name', { params: { name } })
+        // ★ ここを /api/check/horse-name に統一
+        const r = await this.$axios.$get('/api/check/horse-name', { params: { name } })
         this.nameError = r?.exists ? '同名の馬が既に登録されています' : ''
-      } catch (_e) {
-        this.nameError = '重複チェックに失敗しました'
+      } catch {
+        // 通信失敗はブロックせず警告のみ
+        this.nameWarn = '重複チェックに失敗しました（通信）'
       }
     },
     async submit() {
@@ -186,8 +202,8 @@ export default Vue.extend({
       try {
         this.submitting = true
         const body = { ...this.form }
-        const r = await this.$axios.$post('/api/horses', body)
-        if (r?.id) this.$router.push('/')
+        await this.$axios.$post('/api/horses', body)
+        this.$router.push('/')
       } catch (e: any) {
         this.error = e?.response?.data?.error ?? e?.message ?? '登録に失敗しました'
       } finally {

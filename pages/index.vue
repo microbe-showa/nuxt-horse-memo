@@ -4,32 +4,17 @@
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap bg-white rounded-3 shadow-sm px-3 py-2">
       <h1 class="h4 m-0 fw-bold">
         競走馬一覧
-        <small v-if="!loading && !error" class="text-muted">（{{ horses.length }}頭）</small>
+        <small class="text-muted ms-2">{{ (horses && horses.length) ? horses.length : 0 }}頭</small>
       </h1>
 
-      <!-- 右側：1行固定＆高さ一致 -->
       <div class="d-flex align-items-center ms-auto flex-nowrap">
-        <nuxt-link to="/horse/new" class="btn btn-primary btn-sm text-nowrap px-3 me-2">
-          登録
-        </nuxt-link>
-
-        <nuxt-link to="/trainers" class="btn btn-outline-secondary btn-sm text-nowrap px-3 me-2">
-          調教師
-        </nuxt-link>
-
-        <nuxt-link to="/races" class="btn btn-outline-secondary btn-sm text-nowrap px-3 me-3">
-          レース一覧
-        </nuxt-link>
+        <nuxt-link to="/horse/new" class="btn btn-primary btn-sm text-nowrap px-3 me-2">登録</nuxt-link>
+        <nuxt-link to="/trainers" class="btn btn-outline-secondary btn-sm text-nowrap px-3 me-2">調教師</nuxt-link>
+        <nuxt-link to="/races" class="btn btn-outline-secondary btn-sm text-nowrap px-3 me-3">レース一覧</nuxt-link>
 
         <div class="input-group input-group-sm" style="width: 360px;">
           <span class="input-group-text">検索</span>
-          <input
-            v-model.trim="q"
-            type="text"
-            class="form-control"
-            placeholder="馬名で絞り込み"
-            aria-label="検索"
-          />
+          <input v-model.trim="q" type="text" class="form-control" placeholder="馬名で絞り込み" aria-label="検索" />
         </div>
       </div>
     </div>
@@ -43,13 +28,14 @@
       <div class="card-body p-0">
         <table class="table table-hover table-striped m-0 align-middle horse-table">
           <colgroup>
-            <col style="width:220px;">  <!-- 馬名 -->
-            <col style="width:90px;">   <!-- 性 / 年 -->
-            <col style="width:300px;">  <!-- 父 / 母父 -->
-            <col style="width:160px;">  <!-- 調教師 -->
-            <col style="width:120px;">  <!-- 所属トレセン -->
-            <col>                       <!-- 生産者 -->
-            <col style="width:240px;">  <!-- レース/登録ボタン -->
+            <col style="width:220px;">
+            <col style="width:90px;">
+            <col style="width:300px;">
+            <col style="width:160px;">
+            <col style="width:120px;">
+            <col>
+            <col style="width:160px;">
+            <col style="width:110px;">
           </colgroup>
           <thead class="table-light">
             <tr>
@@ -59,45 +45,55 @@
               <th>調教師</th>
               <th>所属トレセン</th>
               <th>生産者</th>
-              <th class="text-end pe-3">操作</th>
+              <th>レース予定</th>
+              <th class="text-end">操作</th>
             </tr>
           </thead>
           <tbody>
             <tr
-              v-for="h in filtered"
-              :key="h.id"
+              v-for="(h, idx) in filtered"
+              :key="(h && h.id) ? h.id : `row-${idx}`"
               class="table-row-click"
-              @click="goEdit(h.id)"
+              @click="goEditSafe(h)"
             >
               <td class="fw-semibold">
-                <nuxt-link :to="`/horse/${h.id}/edit`" class="text-decoration-none" @click.stop>
+                <nuxt-link
+                  v-if="h && h.id"
+                  :to="`/horse/${h.id}/edit`"
+                  class="text-decoration-none"
+                  @click.stop
+                >
                   {{ h.name }}
                 </nuxt-link>
+                <span v-else>—</span>
               </td>
-              <td>{{ formatSexAge(h.sex, h.birth_date) }}</td>
+              <td>{{ formatSexAge(h && h.sex, h && h.birth_date) }}</td>
               <td class="text-truncate" style="max-width: 260px;">
-                {{ formatParents(h.sire, h.bloodmare_sire) }}
+                {{ formatParents(h && h.sire, h && h.bloodmare_sire) }}
               </td>
-              <td>{{ h.trainer || '—' }}</td>
-              <td>{{ h.training_center_name || '—' }}</td>
+              <td>{{ (h && h.trainer) || '—' }}</td>
+              <td>{{ (h && h.training_center_name) || '—' }}</td>
               <td class="text-truncate" style="max-width: 220px;">
-                {{ h.breeder || '—' }}
+                {{ (h && h.breeder) || '—' }}
               </td>
-              <td class="text-end cell-nowrap pe-3">
-                <!-- 今日以降の登録があればバッジで表示（レース名 + 日付） -->
-                <template v-if="h.upcoming_race_name">
-                  <span class="badge rounded-pill bg-info-subtle text-info-emphasis me-2 d-inline-block race-badge"
-                        :title="`${h.upcoming_race_name}（${h.upcoming_race_date}）`">
-                    {{ h.upcoming_race_name }}（{{ h.upcoming_race_date }}）
-                  </span>
-                </template>
-                <!-- ない場合は「レースに登録」ボタン -->
-                <template v-else>
-                  <button class="btn btn-sm btn-outline-success me-2" @click.stop="openRegisterRace(h)">
-                    レースに登録
-                  </button>
-                </template>
+
+              <td>
+                <span v-if="h && h.upcoming_race_name" class="badge bg-info text-dark">
+                  {{ h.upcoming_race_name }}（{{ h.upcoming_race_date }}）
+                </span>
+                <button
+                  v-else
+                  type="button"
+                  class="btn btn-outline-success btn-sm"
+                  @click.stop.prevent="openRaceModal(h)"
+                >
+                  レースに登録
+                </button>
+              </td>
+
+              <td class="text-end">
                 <nuxt-link
+                  v-if="h && h.id"
                   :to="`/horse/${h.id}/edit`"
                   class="btn btn-sm btn-outline-primary"
                   @click.stop
@@ -107,27 +103,67 @@
               </td>
             </tr>
             <tr v-if="filtered.length === 0">
-              <td colspan="7" class="text-center text-muted py-3">該当する馬が見つかりません</td>
+              <td colspan="8" class="text-center text-muted py-4">該当する馬が見つかりません</td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- レース登録モーダル（既存のものがあればそれを使用） -->
-    <div class="modal fade" id="raceRegisterModal" tabindex="-1" role="dialog" aria-hidden="true"></div>
+    <!-- レース登録モーダル -->
+    <div class="modal fade" tabindex="-1" ref="raceModal">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">レースに登録 — {{ targetHorseName }}</h5>
+            <button type="button" class="btn-close" @click="hideModal"></button>
+          </div>
+          <div class="modal-body">
+            <div v-if="modalLoading" class="text-muted">読み込み中...</div>
+            <div v-else>
+              <div class="mb-2">
+                <label class="form-label mb-1">今日以降のレース</label>
+                <select v-model="selectedRaceId" class="form-select">
+                  <option :value="null">選択してください</option>
+                  <option v-for="r in upcomingRaces" :key="r.race_id" :value="r.race_id">
+                    {{ r.race_date }} {{ r.race_name }}
+                  </option>
+                </select>
+              </div>
+              <div v-if="modalError" class="alert alert-danger py-2">{{ modalError }}</div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" @click="hideModal">閉じる</button>
+            <button type="button" class="btn btn-primary" :disabled="!selectedRaceId || posting" @click="registerRace">
+              <span v-if="posting" class="spinner-border spinner-border-sm me-1"></span>
+              登録
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script lang="ts">
 import Vue from 'vue'
-import type { Horse } from '~/types/horse'
 
-type HorseRow = Horse & {
+type HorseRow = {
+  id: number
+  name: string
+  sex?: string | null
+  birth_date?: string | null
+  trainer?: string | null
   training_center_name?: string | null
+  breeder?: string | null
+  sire?: string | null
+  bloodmare_sire?: string | null
   upcoming_race_name?: string | null
   upcoming_race_date?: string | null
 }
+type RaceRow = { race_id:number; race_name:string; race_date:string }
 
 export default Vue.extend({
   name: 'HorseListPage',
@@ -138,36 +174,54 @@ export default Vue.extend({
       loading: true,
       error: '',
       q: '',
+
+      targetHorse: null as HorseRow | null,
+      upcomingRaces: [] as RaceRow[],
+      selectedRaceId: null as number | null,
+      modalLoading: false,
+      modalError: '',
+      posting: false,
     }
   },
   async mounted() {
-    try {
-      const rows: HorseRow[] = await this.$axios.$get('/api/horses')
-      this.horses = rows
-    } catch (e: any) {
-      this.error = e?.response?.data?.error ?? e?.message ?? 'unknown error'
-    } finally {
-      this.loading = false
-    }
+    await this.fetchHorses()
   },
   computed: {
     filtered(): HorseRow[] {
-      if (!this.q) return this.horses
+      // 不正値を丸ごと防御
+      const list = Array.isArray(this.horses) ? this.horses.filter(Boolean) : []
+      if (!this.q) return list
       const qLower = this.q.toLowerCase()
-      return this.horses.filter(h => (h.name ?? '').toLowerCase().includes(qLower))
+      return list.filter(h => !!h && (h.name || '').toLowerCase().includes(qLower))
+    },
+    targetHorseName(): string {
+      return this.targetHorse ? (this.targetHorse.name || '') : ''
     },
   },
   methods: {
-    goEdit(id: number) {
-      this.$router.push(`/horse/${id}/edit`)
+    async fetchHorses() {
+      this.loading = true
+      this.error = ''
+      try {
+        const rows = await this.$axios.$get('/api/horses')
+        // 304 等で undefined が返ってもコケないように防御
+        this.horses = Array.isArray(rows) ? rows.filter(Boolean) as HorseRow[] : []
+      } catch (e: any) {
+        this.error = e?.response?.data?.error ?? e?.message ?? 'unknown error'
+        this.horses = []
+      } finally {
+        this.loading = false
+      }
     },
-    openRegisterRace(h: HorseRow) {
-      this.$router.push(`/horse/${h.id}/edit?registerRace=1`) // 既存の登録UIに遷移する等、運用に合わせて
+    goEditSafe(h: HorseRow | null | undefined) {
+      if (!h || !h.id) return
+      this.$router.push(`/horse/${h.id}/edit`)
     },
+
     // 競走馬の年齢：今年 - 生年
     calcAge(dateStr?: string | null): number | null {
       if (!dateStr) return null
-      const m = dateStr.match(/^(\d{4})-/)
+      const m = String(dateStr).match(/^(\d{4})-/)
       if (!m) return null
       const birthYear = Number(m[1])
       const currentYear = new Date().getFullYear()
@@ -189,6 +243,74 @@ export default Vue.extend({
       if (b) return b
       return '—'
     },
+
+    // ===== レース登録モーダル =====
+    async openRaceModal(h: HorseRow | null | undefined) {
+      if (!h || !h.id) return
+      this.targetHorse = h
+      this.selectedRaceId = null
+      this.modalError = ''
+      this.modalLoading = true
+      this.showModal()
+      try {
+        const races: RaceRow[] = await this.$axios.$get('/api/races-upcoming')
+        this.upcomingRaces = Array.isArray(races) ? races : []
+        if (this.upcomingRaces.length === 0) this.modalError = '登録できるレースがありません'
+      } catch (e: any) {
+        this.modalError = e?.response?.data?.error ?? e?.message ?? '取得に失敗しました'
+      } finally {
+        this.modalLoading = false
+      }
+    },
+    async registerRace() {
+      if (!this.targetHorse || !this.targetHorse.id || !this.selectedRaceId) return
+      this.posting = true
+      this.modalError = ''
+      try {
+        await this.$axios.$post('/api/race-entries', {
+          race_id: this.selectedRaceId,
+          horse_id: this.targetHorse.id,
+        })
+        const race = this.upcomingRaces.find(r => r.race_id === this.selectedRaceId)
+        if (race) {
+          const idx = this.horses.findIndex(x => x && x.id === this.targetHorse!.id)
+          if (idx >= 0) {
+            this.$set(this.horses, idx, {
+              ...this.horses[idx],
+              upcoming_race_name: race.race_name,
+              upcoming_race_date: race.race_date,
+            } as HorseRow)
+          }
+        }
+        this.hideModal()
+      } catch (e: any) {
+        this.modalError = e?.response?.data?.error ?? e?.message ?? '登録に失敗しました'
+      } finally {
+        this.posting = false
+      }
+    },
+
+    // 簡易モーダル制御
+    showModal() {
+      const el = this.$refs.raceModal as HTMLElement
+      if (!el) return
+      el.classList.add('show')
+      el.style.display = 'block'
+      document.body.classList.add('modal-open')
+      const backdrop = document.createElement('div')
+      backdrop.className = 'modal-backdrop fade show'
+      backdrop.setAttribute('data-backdrop', 'race')
+      document.body.appendChild(backdrop)
+    },
+    hideModal() {
+      const el = this.$refs.raceModal as HTMLElement
+      if (!el) return
+      el.classList.remove('show')
+      el.style.display = 'none'
+      document.body.classList.remove('modal-open')
+      const backdrop = document.querySelector('div.modal-backdrop[data-backdrop="race"]')
+      if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop)
+    },
   },
 })
 </script>
@@ -198,7 +320,7 @@ export default Vue.extend({
 .table thead th { font-weight: 700; }
 .card { border-radius: 1rem; }
 
-/* 明るい水色×白、ホバーは蛍光シアン寄り（既存の配色） */
+/* テーブル配色（明るい水色×白、ホバーは蛍光シアン寄り） */
 .horse-table{
   --bs-table-bg: #fff;
   --bs-table-striped-bg: #eaf6ff;
@@ -214,15 +336,10 @@ export default Vue.extend({
   color: var(--bs-table-hover-color) !important;
 }
 
-/* 行を1行に収めるための詰め設定 */
-.horse-table td, .horse-table th {
-  padding-top: .45rem;
-  padding-bottom: .45rem;
-  line-height: 1.25;
-}
-.cell-nowrap { white-space: nowrap; }             /* 操作セルの折り返しを禁止 */
-.race-badge { white-space: nowrap; vertical-align: middle; } /* レース名バッジも1行で省略 */
+/* 馬名と性/年の間を詰める */
 .horse-table th:nth-child(1), .horse-table td:nth-child(1) { padding-right:.25rem; }
 .horse-table th:nth-child(2), .horse-table td:nth-child(2) { padding-left:.25rem; }
+
+/* 行クリックのポインタ */
 .table-row-click { cursor: pointer; }
 </style>

@@ -9,11 +9,7 @@ import { initAllLoggers } from './logger'
 dotenv.config()
 
 const app = express()
-
-// 必要なら CORS（同一オリジンだけなら外してもよい）
 app.use(cors())
-
-// JSON 受け取り
 app.use(bodyParser.json())
 
 // --- DB 接続 ---
@@ -24,14 +20,20 @@ const pool = new Pool({
   user: process.env.PGUSER,
   password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE,
+  keepAlive: true,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+  max: 10,
 })
 
-// ★ ロガー初期化（HTTP / SQL / VIEW）
+// ロガー初期化（HTTP / SQL / VIEW）
 initAllLoggers(app, pool)
 
 // ---- 共通ユーティリティ --------------------------------------------------
 const toYmd = (d?: Date | null) =>
   d ? `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')}` : null
+
+const isValidId = (v: any) => Number.isInteger(v) && v > 0
 
 // ==== Horses ===============================================================
 app.get('/api/horses', async (_req: Request, res: Response) => {
@@ -65,7 +67,14 @@ app.get('/api/horses', async (_req: Request, res: Response) => {
   }
 })
 
+// 互換エンドポイント（誤って /api/horses/check-name を叩いたときの救済）
+app.get('/api/horses/check-name', (req, res, next) => {
+  // 内部的に /api/check/horse-name と同じハンドラへ
+  req.url = '/api/check/horse-name' + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '')
+  ;(app as any)._router.handle(req, res, next)
+})
 
+// 馬名重複チェック
 app.get('/api/check/horse-name', async (req: Request, res: Response) => {
   const name = (req.query.name || '').toString().trim()
   const excludeId = Number(req.query.excludeId || 0) || null
@@ -77,22 +86,8 @@ app.get('/api/check/horse-name', async (req: Request, res: Response) => {
     )
     res.json({ exists: (r.rowCount || 0) > 0 })
   } catch (e: any) {
-    res.json({ exists: false, error: 'server-error'})
-  }
-})
-
-app.get('/api/horses/:id', async (req: Request, res: Response) => {
-  try {
-    const id = Number(req.params.id)
-    const r = await pool.query(
-      `SELECT id, name, sex, TO_CHAR(birth_date,'YYYY-MM-DD') birth_date, trainer, training_center_id,
-              owner, breeder, sire, dam, bloodmare_sire, grandsire, memo
-         FROM horse WHERE id=$1`, [id]
-    )
-    if (!r.rowCount) return res.status(404).json({ error: 'not found' })
-    res.json(r.rows[0])
-  } catch (e: any) {
-    res.status(500).json({ error: e.message })
+    // 失敗しても UI を止めないよう 200 で返す
+    res.json({ exists: false, error: 'server-error' })
   }
 })
 
@@ -108,13 +103,47 @@ app.post('/api/horses', async (req: Request, res: Response) => {
     )
     res.json({ id: r.rows[0].id })
   } catch (e: any) {
+    // if (e?.code === '23505') return res.status(409).json({ error: 'duplicate_name' }) // ← 一意制約を付けた場合の例
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// 馬詳細（今後の出走予定も含めて返す）
+app.get('/api/horses/:id', async (req: Request, res: Response) => {
+  const id = Number(req.params.id)
+  if (!isValidId(id)) return res.status(400).json({ error: 'invalid id' })
+  try {
+    const r = await pool.query(
+      `
+      SELECT
+        h.id, h.name, h.sex, TO_CHAR(h.birth_date,'YYYY-MM-DD') birth_date, h.trainer, h.training_center_id,
+        owner, breeder, sire, dam, bloodmare_sire, grandsire, memo,
+        ur.race_id  AS upcoming_race_id,
+        ur.race_name AS upcoming_race_name,
+        TO_CHAR(ur.race_date, 'YYYY-MM-DD') AS upcoming_race_date
+      FROM horse h
+      LEFT JOIN (
+        SELECT e.horse_id, r.race_id, r.race_name, r.race_date,
+               ROW_NUMBER() OVER (PARTITION BY e.horse_id ORDER BY r.race_date ASC) AS rn
+          FROM t_race_entry e
+          JOIN t_race r ON r.race_id = e.race_id
+         WHERE r.race_date >= CURRENT_DATE
+      ) ur ON ur.horse_id = h.id AND ur.rn = 1
+      WHERE h.id=$1
+      `,
+      [id]
+    )
+    if (!r.rowCount) return res.status(404).json({ error: 'not found' })
+    res.json(r.rows[0])
+  } catch (e: any) {
     res.status(500).json({ error: e.message })
   }
 })
 
 app.put('/api/horses/:id', async (req: Request, res: Response) => {
+  const id = Number(req.params.id)
+  if (!isValidId(id)) return res.status(400).json({ error: 'invalid id' })
   try {
-    const id = Number(req.params.id)
     const { name, sex, birth_date, trainer, training_center_id, owner, breeder, sire, dam, bloodmare_sire, grandsire, memo } = req.body || {}
     await pool.query(
       `UPDATE horse
@@ -125,6 +154,7 @@ app.put('/api/horses/:id', async (req: Request, res: Response) => {
     )
     res.json({ ok: true })
   } catch (e: any) {
+    // if (e?.code === '23505') return res.status(409).json({ error: 'duplicate_name' })
     res.status(500).json({ error: e.message })
   }
 })
@@ -161,8 +191,9 @@ app.get('/api/check/trainer-name', async (req: Request, res: Response) => {
 })
 
 app.get('/api/trainers/:id', async (req: Request, res: Response) => {
+  const id = Number(req.params.id)
+  if (!isValidId(id)) return res.status(400).json({ error: 'invalid id' })
   try {
-    const id = Number(req.params.id)
     const r = await pool.query(
       `SELECT trainer_id, trainer_name, trainer_name_kana, training_center_id
          FROM m_trainer WHERE trainer_id=$1`,
@@ -190,8 +221,9 @@ app.post('/api/trainers', async (req: Request, res: Response) => {
 })
 
 app.put('/api/trainers/:id', async (req: Request, res: Response) => {
+  const id = Number(req.params.id)
+  if (!isValidId(id)) return res.status(400).json({ error: 'invalid id' })
   try {
-    const id = Number(req.params.id)
     const { trainer_name, trainer_name_kana, training_center_id } = req.body || {}
     await pool.query(
       `UPDATE m_trainer SET trainer_name=$1, trainer_name_kana=$2, training_center_id=$3
@@ -222,8 +254,9 @@ app.get('/api/races', async (_req: Request, res: Response) => {
 })
 
 app.get('/api/races/:id', async (req: Request, res: Response) => {
+  const id = Number(req.params.id)
+  if (!isValidId(id)) return res.status(400).json({ error: 'invalid id' })
   try {
-    const id = Number(req.params.id)
     const r = await pool.query(
       `SELECT race_id, race_name, race_date, race_cource_id, race_type_id, distance, race_pace, comment
          FROM t_race WHERE race_id=$1`, [id]
@@ -252,8 +285,9 @@ app.post('/api/races', async (req: Request, res: Response) => {
 })
 
 app.put('/api/races/:id', async (req: Request, res: Response) => {
+  const id = Number(req.params.id)
+  if (!isValidId(id)) return res.status(400).json({ error: 'invalid id' })
   try {
-    const id = Number(req.params.id)
     const { race_name, race_date, race_cource_id, race_type_id, distance, race_pace, comment } = req.body || {}
     await pool.query(
       `UPDATE t_race SET race_name=$1, race_date=$2, race_cource_id=$3, race_type_id=$4, distance=$5, race_pace=$6, comment=$7
@@ -267,9 +301,9 @@ app.put('/api/races/:id', async (req: Request, res: Response) => {
 })
 
 app.get('/api/races/:id/entries', async (req: Request, res: Response) => {
+  const raceId = Number(req.params.id)
+  if (!isValidId(raceId)) return res.status(400).json({ error: 'invalid id' })
   try {
-    const raceId = Number(req.params.id)
-
     const rRace = await pool.query(
       `SELECT race_id, race_name, race_date, race_cource_id, race_type_id, distance, comment
          FROM t_race WHERE race_id=$1`, [raceId]
@@ -294,6 +328,7 @@ app.get('/api/races/:id/entries', async (req: Request, res: Response) => {
   }
 })
 
+// 出走登録（追加）
 app.post('/api/race-entries', async (req: Request, res: Response) => {
   try {
     const { race_id, horse_id } = req.body || {}
@@ -309,13 +344,12 @@ app.post('/api/race-entries', async (req: Request, res: Response) => {
   }
 })
 
-// 部分更新：送られてきた項目だけ UPDATE
+// 出走登録（部分更新：来た項目のみ変更）
 app.patch('/api/race-entries', async (req: Request, res: Response) => {
   try {
     const { race_id, horse_id, grade, analysis_comment, frame_no, horse_no, frame_color } = req.body || {}
     if (!race_id || !horse_id) return res.status(400).json({ error: 'race_id & horse_id required' })
 
-    // 動的に SET 句を組み立てる（来ていない項目は触らない）
     const sets: string[] = []
     const params: any[] = [race_id, horse_id]
     let i = 3
@@ -341,7 +375,7 @@ app.patch('/api/race-entries', async (req: Request, res: Response) => {
       params.push(frame_color ?? null)
     }
 
-    if (sets.length === 0) return res.json({ ok: true }) // 何も更新項目なし
+    if (sets.length === 0) return res.json({ ok: true })
 
     const sql = `UPDATE t_race_entry SET ${sets.join(', ')} WHERE race_id=$1 AND horse_id=$2`
     await pool.query(sql, params)
@@ -351,84 +385,18 @@ app.patch('/api/race-entries', async (req: Request, res: Response) => {
   }
 })
 
-
-app.post('/api/races/:id/mail', async (req: Request, res: Response) => {
+// 出走取消（削除）
+app.delete('/api/race-entries', async (req: Request, res: Response) => {
   try {
-    const raceId = Number(req.params.id)
-
-    const rRace = await pool.query(
-      `SELECT race_id, race_name, race_date, race_cource_id, race_type_id, distance, comment
-         FROM t_race WHERE race_id=$1`, [raceId]
-    )
-    if (!rRace.rowCount) return res.status(404).json({ error: 'race not found' })
-    const race = rRace.rows[0]
-
-    const rH = await pool.query(
-      `SELECT h.id, h.name, h.sex, TO_CHAR(h.birth_date,'YYYY-MM-DD') birth_date,
-              h.memo, e.grade, e.analysis_comment
-         FROM t_race_entry e
-         JOIN horse h ON h.id = e.horse_id
-        WHERE e.race_id = $1
-        ORDER BY e.frame_no NULLS LAST, e.horse_no NULLS LAST, h.name ASC`,
-      [raceId]
-    )
-    const horses = rH.rows
-
-    const courseMap: Record<number, string> = { 1:'札幌',2:'函館',3:'福島',4:'新潟',5:'東京',6:'中山',7:'中京',8:'京都',9:'阪神',10:'小倉' }
-    const typeMap: Record<number, string> = { 1:'芝', 2:'ダート', 3:'その他' }
-    const sexAge = (sex?: string|null, birth?: string|null) => {
-      const y = birth?.match(/^(\d{4})-/)?.[1]
-      if (!y) return sex || '—'
-      const age = new Date().getFullYear() - Number(y)
-      return `${sex ?? ''}${age}`
+    const race_id = Number((req.query.race_id ?? (req.body && req.body.race_id)))
+    const horse_id = Number((req.query.horse_id ?? (req.body && req.body.horse_id)))
+    if (!isValidId(race_id) || !isValidId(horse_id)) {
+      return res.status(400).json({ error: 'race_id & horse_id required' })
     }
-    const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c] as string))
-
-    const header = `${race.race_name}（${toYmd(race.race_date)}｜${courseMap[race.race_cource_id] ?? '#'}｜${typeMap[race.race_type_id] ?? '#'}｜${race.distance}m）`
-    const textLines: string[] = []
-    textLines.push(header, '', `【出走馬（${horses.length}頭）】`)
-    horses.forEach((h: any, i: number) => {
-      const ga = h.grade ? ` [${h.grade}]` : ''
-      const rc = h.analysis_comment ? ` / レースコメント: ${String(h.analysis_comment).replace(/\s+/g,' ').slice(0,200)}` : ''
-      const mm = h.memo ? ` / メモ: ${String(h.memo).replace(/\s+/g,' ').slice(0,200)}` : ''
-      textLines.push(`${i+1}. ${h.name}${ga} / ${sexAge(h.sex, h.birth_date)}${rc}${mm}`)
-    })
-    const text = textLines.join('\n')
-
-    const htmlRows = horses.map((h: any, i: number) => `
-      <tr>
-        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${i+1}</td>
-        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc(h.name)}</td>
-        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc(sexAge(h.sex, h.birth_date))}</td>
-        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc(h.grade ?? '—')}</td>
-        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc((h.analysis_comment ?? '').trim())}</td>
-        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc((h.memo ?? '').trim())}</td>
-      </tr>
-    `).join('')
-
-    const html = `
-      <div>
-        <h3>${esc(header)}</h3>
-        <table style="border-collapse:collapse;min-width:640px;">
-          <thead>
-            <tr style="background:#f8f9fa;">
-              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">#</th>
-              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">馬名</th>
-              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">性/年</th>
-              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">評価</th>
-              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">レースコメント</th>
-              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">メモ</th>
-            </tr>
-          </thead>
-          <tbody>${htmlRows}</tbody>
-        </table>
-      </div>`
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
-    })
-    const mailTo = process.env.MAIL_TO || process.env.GMAIL_USER
-    await transporter.sendMail({ from: process.env.GMAIL_USER, to: mailTo, subject: `[出走馬一覧] ${race.race_name}`, text, html })
+    await pool.query(
+      `DELETE FROM t_race_entry WHERE race_id = $1 AND horse_id = $2`,
+      [race_id, horse_id]
+    )
     res.json({ ok: true })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
