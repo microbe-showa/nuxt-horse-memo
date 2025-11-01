@@ -74,6 +74,16 @@
               <label class="form-label mb-1">調教師</label>
               <input v-model.trim="form.trainer" type="text" class="form-control" />
             </div>
+
+            <div class="col-md-4">
+              <label class="form-label mb-1">出走登録（今日以降）</label>
+              <select v-model="selectedRaceId" class="form-select">
+                <option :value="null">— 登録しない —</option>
+                <option v-for="r in upcomingRaces" :key="r.race_id" :value="r.race_id">
+                  {{ r.race_date }} ｜ {{ r.race_name }}
+                </option>
+              </select>
+            </div>
           </div>
 
           <div class="row g-3 mt-2">
@@ -146,12 +156,9 @@ type Form = {
   bloodmare_sire?: string | null
   grandsire?: string | null
   memo: string
-  // 出走予定（サーバから追加で来る）
-  upcoming_race_id?: number | null
-  upcoming_race_name?: string | null
-  upcoming_race_date?: string | null // 'YYYY-MM-DD'
 }
 type Center = { training_center_id: number; training_center_name: string }
+type UpcomingRace = { race_id: number; race_name: string; race_date: string }
 
 export default Vue.extend({
   name: 'HorseEditPage',
@@ -176,11 +183,11 @@ export default Vue.extend({
         bloodmare_sire: '',
         grandsire: '',
         memo: '',
-        upcoming_race_id: null,
-        upcoming_race_name: '',
-        upcoming_race_date: '',
       } as Form,
       centers: [] as Center[],
+      upcomingRaces: [] as UpcomingRace[],
+      selectedRaceId: null as number | null,
+      selectedRaceIdInitial: null as number | null,
       nameError: '',
       submitting: false,
       error: '',
@@ -198,12 +205,17 @@ export default Vue.extend({
   },
   async mounted() {
     try {
-      const [horse, centers] = await Promise.all([
+      const [horse, centers, races, entry] = await Promise.all([
         this.$axios.$get(`/api/horses/${this.id}`),
         this.$axios.$get('/api/training-centers'),
+        this.$axios.$get('/api/races-upcoming'),
+        this.$axios.$get(`/api/horses/${this.id}/upcoming-entry`),
       ])
       this.form = { ...horse, id: this.id }
       this.centers = centers
+      this.upcomingRaces = races
+      this.selectedRaceId = entry?.race_id ?? null
+      this.selectedRaceIdInitial = this.selectedRaceId
     } catch (e: any) {
       this.error = e?.response?.data?.error ?? e?.message ?? '読み込みに失敗しました'
     }
@@ -218,10 +230,6 @@ export default Vue.extend({
       const age = currentYear - birthYear
       return age >= 0 ? `${age}歳` : '—'
     },
-    formatYmdSlash(d?: string | null): string {
-      if (!d) return ''
-      return d.replace(/-/g, '/')
-    },
     async onNameBlur() {
       const name = (this.form.name || '').trim()
       if (!name) { this.nameError = ''; return }
@@ -235,29 +243,21 @@ export default Vue.extend({
         this.nameError = ''
       }
     },
-    async cancelEntry() {
-      if (!this.form.upcoming_race_id) return
-      const name = this.form.upcoming_race_name || ''
-      if (!confirm(`「${name}」への出走を取り消しますか？`)) return
-      try {
-        await this.$axios.$delete(
-          `/api/race-entries?race_id=${this.form.upcoming_race_id}&horse_id=${this.form.id}`
-        )
-        // 再取得して反映
-        const fresh: Form = await this.$axios.$get(`/api/horses/${this.form.id}`)
-        this.form = { ...fresh, id: this.form.id }
-      } catch (e: any) {
-        alert(e?.response?.data?.error ?? e?.message ?? '出走取消に失敗しました')
-      }
-    },
     async submit() {
       this.error = ''
       await this.onNameBlur()
       if (this.nameError) return
       try {
         this.submitting = true
-        const body = { ...this.form }
-        await this.$axios.$put(`/api/horses/${this.id}`, body)
+      // 1) 馬の更新
+      await this.$axios.$put(`/api/horses/${this.id}`, { ...this.form })
+
+      // 2) 出走登録：レース選択が「変わった」時だけ呼ぶ（同じなら何もしない）
+      if (this.selectedRaceId !== this.selectedRaceIdInitial) {
+        await this.$axios.$post(`/api/horses/${this.id}/upsert-upcoming-entry`, {
+          race_id: this.selectedRaceId ?? null,
+        })
+      }
         this.$router.push(this.backTo)
       } catch (e: any) {
         this.error = e?.response?.data?.error ?? e?.message ?? '更新に失敗しました'

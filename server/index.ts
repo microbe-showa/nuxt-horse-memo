@@ -67,6 +67,92 @@ app.get('/api/horses', async (_req: Request, res: Response) => {
   }
 })
 
+// ==== Horses: 出走登録（今日以降の1件を編集） ===============================
+
+// ① 指定馬の「今日以降の最も近いレース」1件を返す（なければ null）
+app.get('/api/horses/:id/upcoming-entry', async (req: Request, res: Response) => {
+  try {
+    const horseId = Number(req.params.id)
+    const r = await pool.query(
+      `SELECT e.race_id
+         FROM t_race_entry e
+         JOIN t_race r ON r.race_id = e.race_id
+        WHERE e.horse_id = $1
+          AND r.race_date >= CURRENT_DATE
+        ORDER BY r.race_date ASC, r.race_id ASC
+        LIMIT 1`,
+      [horseId]
+    )
+    res.json({ race_id: r.rowCount ? r.rows[0].race_id : null })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ② 指定馬の「今日以降の出走登録」を差し替える（※同一レースなら何もしない）
+app.post('/api/horses/:id/upsert-upcoming-entry', async (req: Request, res: Response) => {
+  const client = await pool.connect()
+  try {
+    const horseId = Number(req.params.id)
+    const reqRaceId: number | null = (req.body?.race_id ?? null) as any
+
+    await client.query('BEGIN')
+
+    // いま登録されている「今日以降の最も近いレース」を取得
+    const cur = await client.query(
+      `SELECT e.race_id
+         FROM t_race_entry e
+         JOIN t_race r ON r.race_id = e.race_id
+        WHERE e.horse_id = $1
+          AND r.race_date >= CURRENT_DATE
+        ORDER BY r.race_date ASC, r.race_id ASC
+        LIMIT 1`,
+      [horseId]
+    )
+    const currentRaceId: number | null = cur.rowCount ? cur.rows[0].race_id : null
+
+    // 変更なし → 何もしない（枠/馬番/色/評価/コメント等を保持）
+    if (reqRaceId !== null && currentRaceId === reqRaceId) {
+      await client.query('COMMIT')
+      return res.json({ ok: true, unchanged: true })
+    }
+
+    // 削除だけ（null）→ 今日以降の出走登録を削除
+    if (reqRaceId === null) {
+      await client.query(
+        `DELETE FROM t_race_entry
+          WHERE horse_id = $1
+            AND race_id IN (SELECT race_id FROM t_race WHERE race_date >= CURRENT_DATE)`,
+        [horseId]
+      )
+      await client.query('COMMIT')
+      return res.json({ ok: true, cleared: true })
+    }
+
+    // レースを変更：今日以降の出走登録を削除してから新しいレースへINSERT
+    await client.query(
+      `DELETE FROM t_race_entry
+        WHERE horse_id = $1
+          AND race_id IN (SELECT race_id FROM t_race WHERE race_date >= CURRENT_DATE)`,
+      [horseId]
+    )
+    await client.query(
+      `INSERT INTO t_race_entry (race_id, horse_id)
+       VALUES ($1, $2)
+       ON CONFLICT (race_id, horse_id) DO NOTHING`,
+      [reqRaceId, horseId]
+    )
+
+    await client.query('COMMIT')
+    res.json({ ok: true, replaced: true })
+  } catch (e: any) {
+    try { await client.query('ROLLBACK') } catch {}
+    res.status(500).json({ error: e.message })
+  } finally {
+    client.release()
+  }
+})
+
 // 互換エンドポイント（誤って /api/horses/check-name を叩いたときの救済）
 app.get('/api/horses/check-name', (req, res, next) => {
   // 内部的に /api/check/horse-name と同じハンドラへ

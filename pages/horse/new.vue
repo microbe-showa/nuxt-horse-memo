@@ -2,7 +2,7 @@
   <div class="container py-4">
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap bg-white rounded-3 shadow-sm px-3 py-2">
       <h1 class="h5 m-0 fw-bold">競走馬登録</h1>
-      <nuxt-link to="/" class="btn btn-outline-secondary btn-sm text-nowrap px-3">戻る</nuxt-link>
+      <nuxt-link to="/" class="btn btn-outline-secondary btn-sm text-nowrap px-3">競走馬一覧</nuxt-link>
     </div>
 
     <div class="card border-0 shadow">
@@ -14,7 +14,6 @@
             <div class="col-md-6">
               <label class="form-label mb-1">
                 馬名 <span class="text-danger">*</span>
-                <!-- 既存名エラーだけボタン無効化。通信失敗は警告表示だけでブロックしない -->
                 <span v-if="nameError" class="ms-2 text-danger small">{{ nameError }}</span>
                 <span v-else-if="nameWarn" class="ms-2 text-warning small">{{ nameWarn }}</span>
               </label>
@@ -62,6 +61,16 @@
             <div class="col-md-5">
               <label class="form-label mb-1">調教師</label>
               <input v-model.trim="form.trainer" type="text" class="form-control" />
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label mb-1">出走登録（今日以降）</label>
+              <select v-model="selectedRaceId" class="form-select">
+                <option :value="null">— 登録しない —</option>
+                <option v-for="r in upcomingRaces" :key="r.race_id" :value="r.race_id">
+                  {{ r.race_date }} ｜ {{ r.race_name }}
+                </option>
+              </select>
             </div>
           </div>
 
@@ -136,6 +145,7 @@ type Form = {
   memo: string
 }
 type Center = { training_center_id: number; training_center_name: string }
+type UpcomingRace = { race_id: number; race_name: string; race_date: string }
 
 export default Vue.extend({
   name: 'HorseNewPage',
@@ -157,7 +167,9 @@ export default Vue.extend({
         memo: '',
       } as Form,
       centers: [] as Center[],
-      nameError: '', // 重複時の赤エラー（→ボタン無効）
+      upcomingRaces: [] as UpcomingRace[],
+      selectedRaceId: null as number | null,
+      nameError: '',
       nameWarn: '', // 通信失敗時の黄色警告（→ボタンは無効化しない）
       submitting: false,
       error: '',
@@ -165,9 +177,14 @@ export default Vue.extend({
   },
   async mounted() {
     try {
-      this.centers = await this.$axios.$get('/api/training-centers')
+      const [centers, races] = await Promise.all([
+        this.$axios.$get('/api/training-centers'),
+        this.$axios.$get('/api/races-upcoming'),
+      ])
+      this.centers = centers
+      this.upcomingRaces = races
     } catch (e: any) {
-      this.error = e?.response?.data?.error ?? e?.message ?? '初期化に失敗しました'
+      this.error = e?.response?.data?.error ?? e?.message ?? '読み込みに失敗しました'
     }
   },
   methods: {
@@ -181,17 +198,14 @@ export default Vue.extend({
       return age >= 0 ? `${age}歳` : '—'
     },
     async onNameBlur() {
-      this.nameError = ''
-      this.nameWarn = ''
       const name = (this.form.name || '').trim()
-      if (!name) return
+      if (!name) { this.nameError = ''; return }
       try {
-        // ★ ここを /api/check/horse-name に統一
-        const r = await this.$axios.$get('/api/check/horse-name', { params: { name } })
+        const r = await this.$axios.$get('/api/check/horse-name', { params: { name, excludeId: 0 } })
         this.nameError = r?.exists ? '同名の馬が既に登録されています' : ''
       } catch {
         // 通信失敗はブロックせず警告のみ
-        this.nameWarn = '重複チェックに失敗しました（通信）'
+        this.nameError = '重複チェックに失敗しました'
       }
     },
     async submit() {
@@ -201,8 +215,14 @@ export default Vue.extend({
 
       try {
         this.submitting = true
-        const body = { ...this.form }
-        await this.$axios.$post('/api/horses', body)
+        // 1) 競走馬を登録
+        const { id } = await this.$axios.$post('/api/horses', this.form)
+
+        // 2) 出走登録（選択されていれば）
+        if (this.selectedRaceId) {
+          await this.$axios.$post(`/api/horses/${id}/upsert-upcoming-entry`, { race_id: this.selectedRaceId })
+        }
+
         this.$router.push('/')
       } catch (e: any) {
         this.error = e?.response?.data?.error ?? e?.message ?? '登録に失敗しました'
