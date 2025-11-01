@@ -445,7 +445,7 @@ export default Vue.extend({
 .cell-tight-right { padding-right: .25rem !important; }
 .cell-tight-left  { padding-left:  .25rem !important; }
 .waku-no{ width: 56px; min-width: 56px; text-align-last: center; }
-.uma-no{ width: 56px; min-width: 56px; text-align-last: center; }
+.uma-no{ width: 56px; min-width: 64px; text-align-last: center; }
 .waku-color{
   width: 40px; min-width: 40px;
   padding-left: 0; padding-right: 0;
