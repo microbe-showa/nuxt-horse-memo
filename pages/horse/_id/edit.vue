@@ -1,13 +1,38 @@
 <template>
   <div class="container py-4">
+    <!-- ヘッダー：タイトル / 更新 / 戻る -->
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap bg-white rounded-3 shadow-sm px-3 py-2">
       <h1 class="h5 m-0 fw-bold">{{ form.name || '競走馬編集' }}</h1>
-      <nuxt-link :to="backTo" class="btn btn-outline-secondary btn-sm text-nowrap px-3">戻る</nuxt-link>
+      <div class="d-flex align-items-center gap-2">
+        <!-- ★ ここが新規（下の更新ボタンと同じロジック） -->
+        <button
+          class="btn btn-primary btn-sm text-nowrap px-3"
+          :disabled="submitting || !!nameError"
+          @click="submit"
+          type="button"
+        >
+          <span v-if="submitting" class="spinner-border spinner-border-sm me-1"></span>
+          更新
+        </button>
+        <nuxt-link :to="backTo" class="btn btn-outline-secondary btn-sm text-nowrap px-3">戻る</nuxt-link>
+      </div>
     </div>
 
     <div class="card border-0 shadow">
       <div class="card-body">
         <form @submit.prevent="submit">
+          <!-- 1. メモ（最上段へ移動） -->
+          <div class="mb-3">
+            <label class="form-label mb-1">メモ</label>
+            <textarea
+              v-model="form.memo"
+              rows="6"
+              class="form-control"
+              placeholder="自由記述（戦績・所感など）"
+            ></textarea>
+          </div>
+
+          <!-- 2. 基本情報（馬名・性別・生年月日・年齢） -->
           <div class="row g-3">
             <div class="col-md-6">
               <label class="form-label mb-1">
@@ -44,21 +69,7 @@
             </div>
           </div>
 
-          <!-- 出走予定（あれば表示） -->
-          <div v-if="form.upcoming_race_id" class="row g-2 align-items-center mt-2">
-            <label class="col-sm-2 col-form-label">出走予定</label>
-            <div class="col-sm-7">
-              <div class="form-control-plaintext">
-                {{ formatYmdSlash(form.upcoming_race_date) }}　{{ form.upcoming_race_name }}
-              </div>
-            </div>
-            <div class="col-sm-3 text-sm-end">
-              <button class="btn btn-outline-danger btn-sm" type="button" @click="cancelEntry">
-                出走取消
-              </button>
-            </div>
-          </div>
-
+          <!-- 3. 所属・調教師 -->
           <div class="row g-3 mt-2">
             <div class="col-md-3">
               <label class="form-label mb-1">所属トレセン</label>
@@ -74,18 +85,9 @@
               <label class="form-label mb-1">調教師</label>
               <input v-model.trim="form.trainer" type="text" class="form-control" />
             </div>
-
-            <div class="col-md-4">
-              <label class="form-label mb-1">出走登録（今日以降）</label>
-              <select v-model="selectedRaceId" class="form-select">
-                <option :value="null">— 登録しない —</option>
-                <option v-for="r in upcomingRaces" :key="r.race_id" :value="r.race_id">
-                  {{ r.race_date }} ｜ {{ r.race_name }}
-                </option>
-              </select>
-            </div>
           </div>
 
+          <!-- 4. 馬主・生産者 -->
           <div class="row g-3 mt-2">
             <div class="col-md-4">
               <label class="form-label mb-1">馬主</label>
@@ -97,6 +99,7 @@
             </div>
           </div>
 
+          <!-- 5. 血統 -->
           <div class="row g-3 mt-2">
             <div class="col-md-4">
               <label class="form-label mb-1">父</label>
@@ -119,11 +122,7 @@
             </div>
           </div>
 
-          <div class="mt-3">
-            <label class="form-label mb-1">メモ</label>
-            <textarea v-model="form.memo" rows="6" class="form-control"></textarea>
-          </div>
-
+          <!-- 6. フォールバックのボタン行（Enter対応やモバイル用） -->
           <div class="mt-4 d-flex gap-2">
             <button class="btn btn-primary" type="submit" :disabled="submitting || !!nameError">
               <span v-if="submitting" class="spinner-border spinner-border-sm me-1"></span>
@@ -158,7 +157,6 @@ type Form = {
   memo: string
 }
 type Center = { training_center_id: number; training_center_name: string }
-type UpcomingRace = { race_id: number; race_name: string; race_date: string }
 
 export default Vue.extend({
   name: 'HorseEditPage',
@@ -185,16 +183,15 @@ export default Vue.extend({
         memo: '',
       } as Form,
       centers: [] as Center[],
-      upcomingRaces: [] as UpcomingRace[],
-      selectedRaceId: null as number | null,
-      selectedRaceIdInitial: null as number | null,
       nameError: '',
       submitting: false,
       error: '',
+      // （必要に応じて）出走登録の現在値を保持している場合はここに selectedRaceId* を持たせる
+      selectedRaceId: null as number | null,
+      selectedRaceIdInitial: null as number | null,
     }
   },
   computed: {
-    // クエリに from=entries & raceId が来ていれば出走馬一覧へ戻す
     backTo(): string {
       const q = this.$route.query || {}
       if (q.from === 'entries' && q.raceId) {
@@ -205,16 +202,14 @@ export default Vue.extend({
   },
   async mounted() {
     try {
-      const [horse, centers, races, entry] = await Promise.all([
+      const [horse, centers] = await Promise.all([
         this.$axios.$get(`/api/horses/${this.id}`),
         this.$axios.$get('/api/training-centers'),
-        this.$axios.$get('/api/races-upcoming'),
-        this.$axios.$get(`/api/horses/${this.id}/upcoming-entry`),
       ])
       this.form = { ...horse, id: this.id }
       this.centers = centers
-      this.upcomingRaces = races
-      this.selectedRaceId = entry?.race_id ?? null
+      // 出走登録情報を持っている場合はここで初期化してください
+      // this.selectedRaceId = horse.upcoming_race_id ?? null
       this.selectedRaceIdInitial = this.selectedRaceId
     } catch (e: any) {
       this.error = e?.response?.data?.error ?? e?.message ?? '読み込みに失敗しました'
@@ -234,30 +229,31 @@ export default Vue.extend({
       const name = (this.form.name || '').trim()
       if (!name) { this.nameError = ''; return }
       try {
-        const registeredHorseInDb = await this.$axios.$get('/api/check/horse-name', {
+        const r = await this.$axios.$get('/api/check/horse-name', {
           params: { name, excludeId: this.id },
         })
-        this.nameError = registeredHorseInDb?.exists ? '同名の馬が既に登録されています' : ''
+        this.nameError = r?.exists ? '同名の馬が既に登録されています' : ''
       } catch (_e) {
-        // 通信失敗は「注意」扱いにして、送信自体は止めないほうが作業性が良いなら空にする
-        this.nameError = ''
+        this.nameError = '重複チェックに失敗しました'
       }
     },
     async submit() {
       this.error = ''
       await this.onNameBlur()
       if (this.nameError) return
+
       try {
         this.submitting = true
-      // 1) 馬の更新
-      await this.$axios.$put(`/api/horses/${this.id}`, { ...this.form })
+        // 1) 馬の更新
+        await this.$axios.$put(`/api/horses/${this.id}`, { ...this.form })
 
-      // 2) 出走登録：レース選択が「変わった」時だけ呼ぶ（同じなら何もしない）
-      if (this.selectedRaceId !== this.selectedRaceIdInitial) {
-        await this.$axios.$post(`/api/horses/${this.id}/upsert-upcoming-entry`, {
-          race_id: this.selectedRaceId ?? null,
-        })
-      }
+        // 2) 出走登録の差し替え（必要な場合のみ）
+        if (this.selectedRaceId !== this.selectedRaceIdInitial) {
+          await this.$axios.$post(`/api/horses/${this.id}/upsert-upcoming-entry`, {
+            race_id: this.selectedRaceId ?? null,
+          })
+        }
+
         this.$router.push(this.backTo)
       } catch (e: any) {
         this.error = e?.response?.data?.error ?? e?.message ?? '更新に失敗しました'
