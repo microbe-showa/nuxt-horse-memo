@@ -81,9 +81,23 @@
               </select>
             </div>
 
-            <div class="col-md-5">
+            <div class="col-md-3">
               <label class="form-label mb-1">調教師</label>
               <input v-model.trim="form.trainer" type="text" class="form-control" />
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label mb-1">出走予定レース</label>
+              <select v-model="selectedRaceId" class="form-select">
+                <option :value="null">（出走予定なし）</option>
+                <option
+                  v-for="r in upcomingRaces"
+                  :key="r.race_id"
+                  :value="r.race_id"
+                >
+                  {{ r.race_date }}｜{{ r.race_name }}
+                </option>
+              </select>
             </div>
           </div>
 
@@ -189,6 +203,7 @@ export default Vue.extend({
       // （必要に応じて）出走登録の現在値を保持している場合はここに selectedRaceId* を持たせる
       selectedRaceId: null as number | null,
       selectedRaceIdInitial: null as number | null,
+      upcomingRaces: [] as { race_id: number; race_name: string; race_date: string }[],
     }
   },
   computed: {
@@ -202,14 +217,17 @@ export default Vue.extend({
   },
   async mounted() {
     try {
-      const [horse, centers] = await Promise.all([
+      const [horse, centers, upcoming] = await Promise.all([
         this.$axios.$get(`/api/horses/${this.id}`),
         this.$axios.$get('/api/training-centers'),
+        this.$axios.$get('/api/races-upcoming'),
       ])
+
       this.form = { ...horse, id: this.id }
       this.centers = centers
-      // 出走登録情報を持っている場合はここで初期化してください
-      // this.selectedRaceId = horse.upcoming_race_id ?? null
+      this.upcomingRaces = upcoming
+
+      this.selectedRaceId = horse.upcoming_race_id ?? null
       this.selectedRaceIdInitial = this.selectedRaceId
     } catch (e: any) {
       this.error = e?.response?.data?.error ?? e?.message ?? '読み込みに失敗しました'
