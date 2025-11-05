@@ -489,6 +489,90 @@ app.delete('/api/race-entries', async (req: Request, res: Response) => {
   }
 })
 
+// メール送付
+app.post('/api/races/:id/mail', async (req: Request, res: Response) => {
+  try {
+    const raceId = Number(req.params.id)
+
+    const rRace = await pool.query(
+      `SELECT race_id, race_name, race_date, race_cource_id, race_type_id, distance, comment
+         FROM t_race WHERE race_id=$1`, [raceId]
+    )
+    if (!rRace.rowCount) return res.status(404).json({ error: 'race not found' })
+    const race = rRace.rows[0]
+
+    const rH = await pool.query(
+      `SELECT h.id, h.name, h.sex, TO_CHAR(h.birth_date,'YYYY-MM-DD') birth_date,
+              h.memo, e.grade, e.analysis_comment
+         FROM t_race_entry e
+         JOIN horse h ON h.id = e.horse_id
+        WHERE e.race_id = $1
+        ORDER BY e.frame_no NULLS LAST, e.horse_no NULLS LAST, h.name ASC`,
+      [raceId]
+    )
+    const horses = rH.rows
+
+    const courseMap: Record<number, string> = { 1:'札幌',2:'函館',3:'福島',4:'新潟',5:'東京',6:'中山',7:'中京',8:'京都',9:'阪神',10:'小倉' }
+    const typeMap: Record<number, string> = { 1:'芝', 2:'ダート', 3:'その他' }
+    const sexAge = (sex?: string|null, birth?: string|null) => {
+      const y = birth?.match(/^(\d{4})-/)?.[1]
+      if (!y) return sex || '—'
+      const age = new Date().getFullYear() - Number(y)
+      return `${sex ?? ''}${age}`
+    }
+    const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c] as string))
+
+    const header = `${race.race_name}（${toYmd(race.race_date)}｜${courseMap[race.race_cource_id] ?? '#'}｜${typeMap[race.race_type_id] ?? '#'}｜${race.distance}m）`
+    const textLines: string[] = []
+    textLines.push(header, '', `【出走馬（${horses.length}頭）】`)
+    horses.forEach((h: any, i: number) => {
+      const ga = h.grade ? ` [${h.grade}]` : ''
+      const rc = h.analysis_comment ? ` / レースコメント: ${String(h.analysis_comment).replace(/\s+/g,' ').slice(0,200)}` : ''
+      const mm = h.memo ? ` / メモ: ${String(h.memo).replace(/\s+/g,' ').slice(0,200)}` : ''
+      textLines.push(`${i+1}. ${h.name}${ga} / ${sexAge(h.sex, h.birth_date)}${rc}${mm}`)
+    })
+    const text = textLines.join('\n')
+
+    const htmlRows = horses.map((h: any, i: number) => `
+      <tr>
+        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${i+1}</td>
+        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc(h.name)}</td>
+        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc(sexAge(h.sex, h.birth_date))}</td>
+        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc(h.grade ?? '—')}</td>
+        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc((h.analysis_comment ?? '').trim())}</td>
+        <td style="padding:6px 4px;border-bottom:1px solid #f2f2f2;">${esc((h.memo ?? '').trim())}</td>
+      </tr>
+    `).join('')
+
+    const html = `
+      <div>
+        <h3>${esc(header)}</h3>
+        <table style="border-collapse:collapse;min-width:640px;">
+          <thead>
+            <tr style="background:#f8f9fa;">
+              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">#</th>
+              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">馬名</th>
+              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">性/年</th>
+              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">評価</th>
+              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">レースコメント</th>
+              <th style="text-align:left;padding:6px 4px;border-bottom:1px solid #e9ecef;">メモ</th>
+            </tr>
+          </thead>
+          <tbody>${htmlRows}</tbody>
+        </table>
+      </div>`
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
+    })
+    const mailTo = process.env.MAIL_TO || process.env.GMAIL_USER
+    await transporter.sendMail({ from: process.env.GMAIL_USER, to: mailTo, subject: `[出走馬一覧] ${race.race_name}`, text, html })
+    res.json({ ok: true })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // ==== Training Center ======================================================
 app.get('/api/training-centers', async (_req: Request, res: Response) => {
   try {
