@@ -129,6 +129,7 @@
 
 <script lang="ts">
 import Vue from 'vue'
+import { getAutoGrandsire, getAutoBreeder } from '@/plugins/breeding-helper'
 
 type Form = {
   name: string
@@ -228,6 +229,22 @@ export default Vue.extend({
         this.error = e?.response?.data?.error ?? e?.message ?? '登録に失敗しました'
       } finally {
         this.submitting = false
+      }
+    },
+  },
+  watch: {
+    // 父の入力を監視して父父を自動入力
+    'form.sire'(newSire: string) {
+      const grandsire = getAutoGrandsire(newSire)
+      if (grandsire) {
+        this.form.grandsire = grandsire
+      }
+    },
+    // 馬主の入力を監視して生産者を自動入力
+    'form.owner'(newOwner: string) {
+      const breeder = getAutoBreeder(newOwner)
+      if (breeder) {
+        this.form.breeder = breeder
       }
     },
   },
