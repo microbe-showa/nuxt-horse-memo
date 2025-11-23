@@ -14,10 +14,10 @@
       "@/*": ["./*"]
     },
 
-    "types": ["@nuxt/types", "@types/node"],
+    "types": ["@nuxt/types", "@types/node","jest"],
     "esModuleInterop": true,         // ← server/index.ts で `import express from 'express'` を許可
     "skipLibCheck": true
   },
-  "include": ["**/*.ts", "**/*.tsx", "**/*.vue", "types/**/*.d.ts"],
+  "include": ["**/*.ts", "**/*.tsx", "**/*.vue", "types/**/*.d.ts", "test/**/*.ts"],
   "exclude": ["node_modules", ".nuxt", "dist"]
 }
