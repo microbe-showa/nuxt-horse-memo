@@ -12,12 +12,13 @@
           <!-- 馬名 / 性別 / 生年月日 -->
           <div class="row g-3">
             <div class="col-md-6">
-              <label class="form-label mb-1">
+              <label class="form-label mb-1" for="horse-name">
                 馬名 <span class="text-danger">*</span>
                 <span v-if="nameError" class="ms-2 text-danger small">{{ nameError }}</span>
                 <span v-else-if="nameWarn" class="ms-2 text-warning small">{{ nameWarn }}</span>
               </label>
               <input
+                id="horse-name"
                 v-model.trim="form.name"
                 @blur="onNameBlur"
                 type="text"
@@ -27,8 +28,8 @@
             </div>
 
             <div class="col-md-2">
-              <label class="form-label mb-1">性別</label>
-              <select v-model="form.sex" class="form-select">
+              <label class="form-label mb-1" for="horse-sex">性別</label>
+              <select id="horse-sex" v-model="form.sex" class="form-select">
                 <option value="">—</option>
                 <option value="牡">牡</option>
                 <option value="牝">牝</option>
@@ -64,8 +65,8 @@
             </div>
 
             <div class="col-md-4">
-              <label class="form-label mb-1">出走登録（今日以降）</label>
-              <select v-model="selectedRaceId" class="form-select">
+              <label class="form-label mb-1" for="horse-upcoming-race">出走登録（今日以降）</label>
+              <select id="horse-upcoming-race" v-model="selectedRaceId" class="form-select">
                 <option :value="null">— 登録しない —</option>
                 <option v-for="r in upcomingRaces" :key="r.race_id" :value="r.race_id">
                   {{ r.race_date }} ｜ {{ r.race_name }}
@@ -76,12 +77,12 @@
 
           <div class="row g-3 mt-2">
             <div class="col-md-4">
-              <label class="form-label mb-1">馬主</label>
-              <input v-model.trim="form.owner" type="text" class="form-control" />
+              <label class="form-label mb-1" for="owner">馬主</label>
+              <input id="owner" v-model.trim="form.owner" type="text" class="form-control" />
             </div>
             <div class="col-md-4">
-              <label class="form-label mb-1">生産者</label>
-              <input v-model.trim="form.breeder" type="text" class="form-control" />
+              <label class="form-label mb-1" for="breeder">生産者</label>
+              <input id="breeder" v-model.trim="form.breeder" type="text" class="form-control" />
             </div>
           </div>
 
@@ -113,7 +114,7 @@
           </div>
 
           <div class="mt-4 d-flex gap-2">
-            <button class="btn btn-primary" type="submit" :disabled="submitting || !!nameError">
+            <button class="btn btn-primary" type="submit" :disabled="submitting || !!nameError" data-testid="horse-register-submit">
               <span v-if="submitting" class="spinner-border spinner-border-sm me-1"></span>
               登録
             </button>
