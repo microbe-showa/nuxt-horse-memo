@@ -36,31 +36,36 @@ const toYmd = (d?: Date | null) =>
 const isValidId = (v: any) => Number.isInteger(v) && v > 0
 
 // ==== Horses ===============================================================
-app.get('/api/horses', async (_req: Request, res: Response) => {
+app.get('/api/horses', async (req: Request, res: Response) => {
   try {
+    const showRetired = String(req.query.showRetired ?? '0') === '1' ? 1 : 0
+
     const sql = `
       SELECT
-        h.id, h.name, h.sex, TO_CHAR(h.birth_date, 'YYYY-MM-DD') AS birth_date,
+        h.id, h.name, h.sex,
+        TO_CHAR(h.birth_date, 'YYYY-MM-DD') AS birth_date,
         h.trainer, h.breeder, h.sire, h.dam, h.bloodmare_sire,
         h.training_center_id,
+        h.del_flg,
         tc.training_center_name,
         ur.upcoming_race_name,
         TO_CHAR(ur.upcoming_race_date, 'YYYY/MM/DD') AS upcoming_race_date
       FROM horse h
       LEFT JOIN m_training_center tc
-             ON tc.training_center_id = h.training_center_id
+        ON tc.training_center_id = h.training_center_id
       LEFT JOIN (
         SELECT e.horse_id,
-               r.race_name       AS upcoming_race_name,
-               r.race_date       AS upcoming_race_date,
+               r.race_name AS upcoming_race_name,
+               r.race_date AS upcoming_race_date,
                ROW_NUMBER() OVER (PARTITION BY e.horse_id ORDER BY r.race_date ASC) AS rn
-          FROM t_race_entry e
-          JOIN t_race r ON r.race_id = e.race_id
-         WHERE r.race_date >= CURRENT_DATE
+        FROM t_race_entry e
+        JOIN t_race r ON r.race_id = e.race_id
+        WHERE r.race_date >= CURRENT_DATE
       ) ur ON ur.horse_id = h.id AND ur.rn = 1
-      ORDER BY h.name ASC;
+      WHERE ($1::int = 1 OR COALESCE(h.del_flg, 0) = 0)
+      ORDER BY h.name ASC
     `
-    const r = await pool.query(sql)
+    const r = await pool.query(sql, [showRetired])
     res.json(r.rows)
   } catch (e: any) {
     res.status(500).json({ error: e.message })
@@ -94,8 +99,9 @@ app.post('/api/horses/:id/upsert-upcoming-entry', async (req: Request, res: Resp
   const client = await pool.connect()
   try {
     const horseId = Number(req.params.id)
-    const reqRaceId: number | null = (req.body?.race_id ?? null) as any
-
+    const reqRaceIdRaw = req.body?.race_id
+    const isRetired = reqRaceIdRaw === 'retired'
+    const reqRaceId: number | null = isRetired ? null : (req.body?.race_id ?? null) as any
     await client.query('BEGIN')
 
     // いま登録されている「今日以降の最も近いレース」を取得
@@ -143,6 +149,25 @@ app.post('/api/horses/:id/upsert-upcoming-entry', async (req: Request, res: Resp
       [reqRaceId, horseId]
     )
 
+    // 引退処理
+    if (isRetired) {
+      // 出走登録していたレースがある場合は削除
+      await client.query(
+        `DELETE FROM t_race_entry
+         WHERE horse_id = $1
+         AND race_id IN (SELECT race_id FROM t_race WHERE race_date >= CURRENT_DATE)`,
+         [horseId]
+      )
+
+      await client.query(
+        `UPDATE horse SET del_flg = true WHERE horse_id = $1`,
+        [horseId]
+      )
+
+      await client.query('COMMIT')
+      res.json({ ok: true, retired: true })
+    }
+
     await client.query('COMMIT')
     res.json({ ok: true, replaced: true })
   } catch (e: any) {
@@ -177,13 +202,14 @@ app.get('/api/check/horse-name', async (req: Request, res: Response) => {
   }
 })
 
+// 競走馬登録
 app.post('/api/horses', async (req: Request, res: Response) => {
   try {
     const { name, sex, birth_date, trainer, training_center_id, owner, breeder, sire, dam, bloodmare_sire, grandsire, memo } = req.body || {}
     const r = await pool.query(
       `INSERT INTO horse
-       (name, sex, birth_date, trainer, training_center_id, owner, breeder, sire, dam, bloodmare_sire, grandsire, memo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       (name, sex, birth_date, trainer, training_center_id, owner, breeder, sire, dam, bloodmare_sire, grandsire, memo, del_flg)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0)
        RETURNING id`,
       [name, sex, birth_date || null, trainer, training_center_id || null, owner, breeder, sire, dam, bloodmare_sire, grandsire, memo]
     )
@@ -203,7 +229,7 @@ app.get('/api/horses/:id', async (req: Request, res: Response) => {
       `
       SELECT
         h.id, h.name, h.sex, TO_CHAR(h.birth_date,'YYYY-MM-DD') birth_date, h.trainer, h.training_center_id,
-        owner, breeder, sire, dam, bloodmare_sire, grandsire, memo,
+        h.owner, h.breeder, h.sire, h.dam, h.bloodmare_sire, h.grandsire, h.memo, h.del_flg,
         ur.race_id  AS upcoming_race_id,
         ur.race_name AS upcoming_race_name,
         TO_CHAR(ur.race_date, 'YYYY-MM-DD') AS upcoming_race_date
@@ -486,6 +512,42 @@ app.delete('/api/race-entries', async (req: Request, res: Response) => {
     res.json({ ok: true })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
+  }
+})
+
+// 引退（登録抹消）
+// 今日以降の出走登録も全削除
+app.post('/api/horses/:id/retire', async (req: Request, res: Response) => {
+  const client = await pool.connect()
+  try {
+    const horseId = Number(req.params.id)
+    if (!isValidId(horseId)) return res.status(400).json({ error: 'invalid id' })
+
+    await client.query('BEGIN')
+
+    // 今日以降の出走登録を削除
+    await client.query(
+      `DELETE FROM t_race_entry
+        WHERE horse_id = $1
+          AND race_id IN (SELECT race_id FROM t_race WHERE race_date >= CURRENT_DATE)`,
+      [horseId]
+    )
+
+    // 登録抹消フラグを立てる
+    await client.query(
+      `UPDATE horse
+          SET del_flg = 1
+        WHERE id = $1`,
+      [horseId]
+    )
+
+    await client.query('COMMIT')
+    return res.json({ ok: true, retired: true })
+  } catch (e: any) {
+    try { await client.query('ROLLBACK') } catch {}
+    return res.status(500).json({ error: e.message })
+  } finally {
+    client.release()
   }
 })
 

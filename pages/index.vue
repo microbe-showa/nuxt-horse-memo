@@ -1,20 +1,64 @@
 <template>
   <div class="container py-4">
     <!-- ヘッダー行 -->
-    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap bg-white rounded-3 shadow-sm px-3 py-2">
-      <h1 class="h4 m-0 fw-bold">
-        競走馬一覧
-        <small class="text-muted ms-2">{{ (horses && horses.length) ? horses.length : 0 }}頭</small>
-      </h1>
+    <div
+      class="d-flex align-items-center justify-content-between mb-3 flex-wrap bg-white rounded-3 shadow-sm px-3 py-2"
+    >
+      <div class="d-flex align-items-center flex-wrap gap-2">
+        <h1 class="h4 m-0 fw-bold">
+          競走馬一覧
+          <small class="text-muted ms-2">
+            {{ filteredCount }}頭 / 全{{ totalCount }}頭
+          </small>
+        </h1>
+
+        <!-- 引退馬フィルタ -->
+        <div class="form-check form-check-inline ms-2 mb-0 text-nowrap">
+          <input
+            id="showRetired"
+            class="form-check-input"
+            type="checkbox"
+            v-model="showRetired"
+          />
+          <label class="form-check-label" for="showRetired">引退馬も表示</label>
+        </div>
+
+        <!-- フィルタ状態のヒント -->
+        <span class="badge bg-light text-dark border" v-if="!showRetired">
+          現役のみ
+        </span>
+        <span class="badge bg-light text-dark border" v-else>
+          現役＋引退
+        </span>
+        <span class="badge bg-light text-dark border" v-if="q">
+          馬名: "{{ q }}"
+        </span>
+      </div>
 
       <div class="d-flex align-items-center ms-auto flex-nowrap">
         <nuxt-link to="/horse/new" class="btn btn-primary btn-sm text-nowrap px-3 me-2">登録</nuxt-link>
         <nuxt-link to="/trainers" class="btn btn-outline-secondary btn-sm text-nowrap px-3 me-2">調教師</nuxt-link>
         <nuxt-link to="/races" class="btn btn-outline-secondary btn-sm text-nowrap px-3 me-3">レース一覧</nuxt-link>
 
-        <div class="input-group input-group-sm" style="width: 360px;">
-          <span class="input-group-text">検索</span>
-          <input v-model.trim="q" type="text" class="form-control" placeholder="馬名で絞り込み" aria-label="検索" />
+        <!-- 馬名検索 -->
+        <div class="input-group input-group-sm" style="width: 420px;">
+          <span class="input-group-text">馬名検索</span>
+          <input
+            v-model.trim="q"
+            type="text"
+            class="form-control"
+            placeholder="例：イクイノックス"
+            aria-label="馬名検索"
+          />
+          <button
+            class="btn btn-outline-secondary"
+            type="button"
+            @click="q = ''"
+            :disabled="!q"
+            title="クリア"
+          >
+            ×
+          </button>
         </div>
       </div>
     </div>
@@ -55,6 +99,7 @@
               :key="(h && h.id) ? h.id : `row-${idx}`"
               class="table-row-click"
               @click="goEditSafe(h)"
+              :class="{ 'is-retired': isRetired(h) }"
             >
               <td class="fw-semibold">
                 <nuxt-link
@@ -66,6 +111,9 @@
                   {{ h.name }}
                 </nuxt-link>
                 <span v-else>—</span>
+
+                <!-- 引退バッジ -->
+                <span v-if="isRetired(h)" class="badge bg-secondary ms-2">引退</span>
               </td>
               <td>{{ formatSexAge(h && h.sex, h && h.birth_date) }}</td>
               <td class="text-truncate" style="max-width: 260px;">
@@ -81,6 +129,10 @@
                 <span v-if="h && h.upcoming_race_name" class="badge bg-info text-dark">
                   {{ h.upcoming_race_name }}（{{ h.upcoming_race_date }}）
                 </span>
+
+                <!-- 引退馬にはレース登録ボタンを出さない -->
+                <span v-else-if="isRetired(h)" class="text-muted">—</span>
+
                 <button
                   v-else
                   type="button"
@@ -102,8 +154,15 @@
                 </nuxt-link>
               </td>
             </tr>
+
             <tr v-if="filtered.length === 0">
-              <td colspan="8" class="text-center text-muted py-4">該当する馬が見つかりません</td>
+              <td colspan="8" class="text-center text-muted py-4">
+                該当する馬が見つかりません
+                <div class="small mt-1">
+                  <span v-if="q">馬名検索をクリアしてみてください。</span>
+                  <span v-else>「引退馬も表示」をオンにすると増える可能性があります。</span>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -128,7 +187,13 @@
                   <option v-for="r in upcomingRaces" :key="r.race_id" :value="r.race_id">
                     {{ r.race_date }} {{ r.race_name }}
                   </option>
+                  <!-- 一覧側のみ：最後に「引退」を追加 -->
+                  <option :value="RETIRE_VALUE">引退</option>
                 </select>
+
+                <div class="form-text" v-if="selectedRaceId === RETIRE_VALUE">
+                  「引退」を選ぶと、この馬は一覧で非表示（引退馬も表示ON時のみ表示）になります。
+                </div>
               </div>
               <div v-if="modalError" class="alert alert-danger py-2">{{ modalError }}</div>
             </div>
@@ -162,8 +227,11 @@ type HorseRow = {
   bloodmare_sire?: string | null
   upcoming_race_name?: string | null
   upcoming_race_date?: string | null
+  // 追加仕様：登録抹消フラグ
+  del_flg?: number | boolean | null
 }
-type RaceRow = { race_id:number; race_name:string; race_date:string }
+
+type RaceRow = { race_id: number; race_name: string; race_date: string }
 
 export default Vue.extend({
   name: 'HorseListPage',
@@ -174,6 +242,7 @@ export default Vue.extend({
       loading: true,
       error: '',
       q: '',
+      showRetired: false,
 
       targetHorse: null as HorseRow | null,
       upcomingRaces: [] as RaceRow[],
@@ -181,31 +250,58 @@ export default Vue.extend({
       modalLoading: false,
       modalError: '',
       posting: false,
+
+      RETIRE_VALUE: -1 as const,
+    }
+  },
+  watch: {
+    showRetired() {
+      this.fetchHorses()
     }
   },
   async mounted() {
     await this.fetchHorses()
   },
   computed: {
+    totalCount(): number {
+      const list = Array.isArray(this.horses) ? this.horses.filter(Boolean) : []
+      return list.length
+    },
+    filteredCount(): number {
+      return this.filtered.length
+    },
     filtered(): HorseRow[] {
       // 不正値を丸ごと防御
       const list = Array.isArray(this.horses) ? this.horses.filter(Boolean) : []
-      if (!this.q) return list
+
+      // 引退馬フィルタ（デフォルトは現役のみ）
+      const byRetire = this.showRetired ? list : list.filter(h => !this.isRetired(h))
+
+      // 馬名検索
+      if (!this.q) return byRetire
       const qLower = this.q.toLowerCase()
-      return list.filter(h => !!h && (h.name || '').toLowerCase().includes(qLower))
+      return byRetire.filter(h => (h?.name || '').toLowerCase().includes(qLower))
     },
     targetHorseName(): string {
       return this.targetHorse ? (this.targetHorse.name || '') : ''
     },
   },
   methods: {
+    isRetired(h: HorseRow | null | undefined): boolean {
+      if (!h) return false
+      // del_flg: 1/true を引退扱い
+      return h.del_flg === 1 || h.del_flg === true
+    },
     async fetchHorses() {
       this.loading = true
       this.error = ''
       try {
-        const rows = await this.$axios.$get('/api/horses')
-        // 304 等で undefined が返ってもコケないように防御
-        this.horses = Array.isArray(rows) ? rows.filter(Boolean) as HorseRow[] : []
+        const rows = await this.$axios.$get('/api/horses',{
+          params: {
+            showRetired: this.showRetired ? 1 : 0
+          }
+        })
+        this.horses = Array.isArray(rows) ? (rows.filter(Boolean) as HorseRow[]) : []
       } catch (e: any) {
         this.error = e?.response?.data?.error ?? e?.message ?? 'unknown error'
         this.horses = []
@@ -247,6 +343,8 @@ export default Vue.extend({
     // ===== レース登録モーダル =====
     async openRaceModal(h: HorseRow | null | undefined) {
       if (!h || !h.id) return
+      if (this.isRetired(h)) return
+
       this.targetHorse = h
       this.selectedRaceId = null
       this.modalError = ''
@@ -267,6 +365,23 @@ export default Vue.extend({
       this.posting = true
       this.modalError = ''
       try {
+        // 「引退」を選んだ場合は del_flg を立てるAPIを叩く（例）
+        if (this.selectedRaceId === this.RETIRE_VALUE) {
+          await this.$axios.$post(`/api/horses/${this.targetHorse.id}/retire`, { del_flg: 1 })
+          const idx = this.horses.findIndex(x => x && x.id === this.targetHorse!.id)
+          if (idx >= 0) {
+            this.$set(this.horses, idx, {
+              ...this.horses[idx],
+              del_flg: 1,
+              upcoming_race_name: null,
+              upcoming_race_date: null,
+            } as HorseRow)
+          }
+          this.hideModal()
+          return
+        }
+
+        // 通常：出走登録
         await this.$axios.$post('/api/race-entries', {
           race_id: this.selectedRaceId,
           horse_id: this.targetHorse.id,
@@ -342,4 +457,9 @@ export default Vue.extend({
 
 /* 行クリックのポインタ */
 .table-row-click { cursor: pointer; }
+
+/* 引退馬は少しグレーに */
+.is-retired {
+  opacity: 0.75;
+}
 </style>

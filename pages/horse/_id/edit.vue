@@ -3,6 +3,8 @@
     <!-- ヘッダー：タイトル / 更新 / 戻る -->
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap bg-white rounded-3 shadow-sm px-3 py-2">
       <h1 class="h5 m-0 fw-bold">{{ form.name || '競走馬編集' }}</h1>
+      <span v-if="isRetiredSelected" class="badge bg-secondary" title="引退馬（一覧では「引退馬も含む」がONの時のみ表示）">引退</span>
+
       <div class="d-flex align-items-center gap-2">
         <!-- ★ ここが新規（下の更新ボタンと同じロジック） -->
         <button
@@ -97,7 +99,10 @@
                 >
                   {{ r.race_date }}｜{{ r.race_name }}
                 </option>
+                <option value="RETIRE_VALUE">引退</option>
               </select>
+              <div class="form-text">「引退」を選ぶと、この馬は一覧で非表示になります（「引退馬も表示」をONにしたときのみ表示）。</div>
+              <div v-if="raceUiNote" class="alert alert-warning py-2 mt-2 mb-0">{{ raceUiNote }}</div>
             </div>
           </div>
 
@@ -171,6 +176,10 @@ type Form = {
   memo: string
 }
 type Center = { training_center_id: number; training_center_name: string }
+type RaceRow = {race_id: number; race_name: string, race_date: string}
+
+const RETIRE_VALUE = '__RETIRE__' as const
+type SeletedRace = number | null | typeof RETIRE_VALUE
 
 export default Vue.extend({
   name: 'HorseEditPage',
@@ -180,6 +189,7 @@ export default Vue.extend({
   },
   data() {
     return {
+      RETIRE_VALUE: 'retired' as const,
       id: Number(this.$route.params.id),
       form: {
         id: 0,
@@ -201,8 +211,8 @@ export default Vue.extend({
       submitting: false,
       error: '',
       // （必要に応じて）出走登録の現在値を保持している場合はここに selectedRaceId* を持たせる
-      selectedRaceId: null as number | null,
-      selectedRaceIdInitial: null as number | null,
+      selectedRaceId: null as number | 'retired' | null,
+      selectedRaceIdInitial: null as number | 'retired' | null,
       upcomingRaces: [] as { race_id: number; race_name: string; race_date: string }[],
     }
   },
@@ -213,6 +223,20 @@ export default Vue.extend({
         return `/races/${q.raceId}/entries`
       }
       return '/'
+    },
+    isRetiredSelected(): boolean {
+      return this.selectedRaceId === this.RETIRE_VALUE
+    },
+    raceUiNote(): string {
+      if (this.isRetiredSelected) return '競走馬登録から抹消します（今日以降の出走登録は削除されます）'
+      return ''
+    },
+    desiredRetired(): boolean {
+      return this.selectedRaceId === this.RETIRE_VALUE
+    },
+    desiredRaceId(): number | null {
+      if (this.selectedRaceId === this.RETIRE_VALUE) return null
+      return (typeof this.selectedRaceId === 'number') ? this.selectedRaceId : null
     },
   },
   async mounted() {
@@ -226,8 +250,9 @@ export default Vue.extend({
       this.form = { ...horse, id: this.id }
       this.centers = centers
       this.upcomingRaces = upcoming
-
-      this.selectedRaceId = horse.upcoming_race_id ?? null
+      
+      const isRetired = Number(horse?.del_flg ?? 0) === 1
+      this.selectedRaceId = isRetired ? this.RETIRE_VALUE : (horse?.upcoming_race_id ?? null)
       this.selectedRaceIdInitial = this.selectedRaceId
     } catch (e: any) {
       this.error = e?.response?.data?.error ?? e?.message ?? '読み込みに失敗しました'
@@ -265,11 +290,13 @@ export default Vue.extend({
         // 1) 馬の更新
         await this.$axios.$put(`/api/horses/${this.id}`, { ...this.form })
 
-        // 2) 出走登録の差し替え（必要な場合のみ）
+        // 2) 反映後の初期値を更新
         if (this.selectedRaceId !== this.selectedRaceIdInitial) {
           await this.$axios.$post(`/api/horses/${this.id}/upsert-upcoming-entry`, {
-            race_id: this.selectedRaceId ?? null,
+            race_id: this.desiredRaceId,
+            retired: this.desiredRetired,
           })
+          this.selectedRaceIdInitial = this.selectedRaceId
         }
 
         this.$router.push(this.backTo)
