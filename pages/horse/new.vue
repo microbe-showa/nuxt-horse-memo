@@ -130,7 +130,7 @@
 
 <script lang="ts">
 import Vue from 'vue'
-import { getAutoGrandsire, getAutoBreeder } from '@/plugins/breeding-helper'
+import { getAutoGrandsire, getAutoBreeder } from '~/plugins/regist-horse-helper'
 
 type Form = {
   name: string
