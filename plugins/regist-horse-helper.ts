@@ -56,6 +56,8 @@ export function getAutoGrandsire(sireName: string | null | undefined): string | 
   return sireToGrandsireMap[key] ?? null
 }
 
+// ★ 馬主 → 生産者 の対応表（必要に応じて増やせる）
+// 必ずしもこの組み合わせではないが自動入力しておくと楽
 export const ownerToBreederMap: Record<string, string> = {
   'シルクレーシング':'ノーザンファーム',
   'サンデーレーシング':'ノーザンファーム',
@@ -68,7 +70,7 @@ export const ownerToBreederMap: Record<string, string> = {
   '社台レースホース':'社台ファーム',
 }
 
-// ★ 父 → 父父 の自動入力を返す関数
+// ★ 馬主 → 生産者 の自動入力を返す関数
 export function getAutoBreeder(breederName: string | null | undefined): string | null {
   if (!breederName) return null
   const key = breederName.trim()
