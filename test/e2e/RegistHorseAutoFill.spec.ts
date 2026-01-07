@@ -5,7 +5,7 @@ test('競走馬登録画面が表示される', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '競走馬登録' })).toBeVisible()
 })
 
-const getOwnerLabelAndBreederLabel = async (page: Page) => {
+const getOwnerAndBreeder = async (page: Page) => {
   await page.goto('/horse/new')
   const owner = page.getByLabel('馬主')
   const breeder = page.getByLabel('生産者')
@@ -17,7 +17,7 @@ const testBreederValueAutoFillfromOwnerValue = async (
   inputOwnerValue: string,
   expectedBreederValue: string
 ) => {
-  const {owner, breeder} = await getOwnerLabelAndBreederLabel(page)
+  const {owner, breeder} = await getOwnerAndBreeder(page)
   await owner.fill(inputOwnerValue)
   await expect(breeder).toHaveValue(expectedBreederValue, {timeout: 10_000})
 }
